@@ -1,4 +1,4 @@
-# ESP32-CAM Video Stream to Mediapipe Hand Tracking via OBS
+# ESP32-CAM Video Stream to MediaPipe Hand Tracking via OBS
 
 Run MediaPipe hand tracking in a web app using your ESP32-CAM video source. This project uses OBS Studio's Virtual Camera as a simple bridge, converting the ESP32's MJPEG stream (which MediaPipe can't use directly) into a compatible webcam feed, eliminating the need for manual transcoding tools such as FFmpeg. 
 
