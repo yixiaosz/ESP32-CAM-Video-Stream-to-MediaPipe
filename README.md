@@ -61,3 +61,7 @@ Run MediaPipe hand tracking in a web app using your ESP32-CAM video source. This
 ## Acknowledgements
 
 This project utilizes the capabilities of the **ESP32-CAM** hardware module for video capture and streaming, and relies on **OBS Studio**'s Virtual Camera feature to bridge the video feed to the web application.
+
+## License
+
+This project is licensed under the MIT License.
