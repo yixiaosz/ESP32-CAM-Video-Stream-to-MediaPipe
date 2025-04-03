@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32-Cam hand tracking stream</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+
+        #gesture-display {
+            position: absolute;
+            font-size: 2rem;
+            color: #333;
+            z-index: 2;
+            top: 40%;
+            transform: translateY(-40%);
+        }
+
+        #x-display {
+            position: absolute;
+            font-size: 4rem;
+            color: #333;
+            z-index: 2;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        #y-display {
+            position: absolute;
+            font-size: 4rem;
+            color: #333;
+            z-index: 2;
+            top: 60%;
+            transform: translateY(-60%);
+        }
+
+        #landmark-display {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            font-size: 1rem;
+            color: #333;
+            background-color: rgba(255, 255, 255, 0.7);
+            padding: 10px;
+            z-index: 3;
+            border: 1px solid #333;
+        }
+
+        #camera {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            border: 2px solid #333;
+            z-index: 1;
+        }
+
+        #canvas {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1;
+        }
+
+    </style>
+    <!-- Load the MediaPipe Hands library -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <!-- Load the Camera utility (assumed to help find the correct camera ID) -->
+    <!-- Check the browser console after running cameraUtility2.js to find the correct deviceId -->
+    <script src="cameraUtility2.js"></script>
+</head>
+<body>
+    <!-- UI Elements for displaying information -->
+    <div id="gesture-display">Gesture: None</div>
+    <div id="x-display">X: 0</div>
+    <div id="y-display">Y: 0</div>
+    <div id="landmark-display">Landmark Data: </div>
+
+    <!-- Video element to display camera feed -->
+    <video id="camera" width="320" height="240" autoplay></video>
+    <!-- Canvas element for drawing landmarks and bounding box -->
+    <canvas id="canvas" width="320" height="240"></canvas>
+
+    <script>
+        /**
+         * =========================================================================
+         *                            CONFIGURATION
+         * =========================================================================
+         * Modify the values below to suit your setup.
+         */
+
+        /**
+         * @const {string} CAMERA_ID
+         * The specific device ID of the camera you want to use.
+         * Use the included `cameraUtility2.js` script and check your browser's
+         * developer console to list available cameras and find the correct ID.
+         * If unsure, you might try removing the `deviceId` constraint entirely
+         * to use the default camera, but specifying it is more reliable.
+         * Example: 'a1b2c3d4...' or leave as default if using cameraUtility2.js
+         */
+        const CAMERA_ID = ' '; // <-- UPDATE THIS WITH YOUR CAMERA'S deviceId
+
+        /**
+         * @const {number} VIDEO_WIDTH
+         * The desired width of the video feed and processing canvas.
+         */
+        const VIDEO_WIDTH = 320;
+
+        /**
+         * @const {number} VIDEO_HEIGHT
+         * The desired height of the video feed and processing canvas.
+         */
+        const VIDEO_HEIGHT = 240;
+
+        /**
+         * =========================================================================
+         *                            APPLICATION LOGIC
+         * =========================================================================
+         */
+
+        // --- DOM Element References ---
+        const videoElement = document.getElementById('camera');
+        const gestureDisplay = document.getElementById('gesture-display');
+        const xDisplay = document.getElementById('x-display');
+        const yDisplay = document.getElementById('y-display');
+        const landmarkDisplay = document.getElementById('landmark-display');
+        const canvasElement = document.getElementById('canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        // --- MediaPipe Hands Initialization ---
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+        });
+
+        hands.setOptions({
+            maxNumHands: 1, // <-- UPDATE IF NEEDED
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7,
+        });
+
+        const onHandsResults = (results) => {
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                // Use landmarks from the first detected hand
+                const landmarks = results.multiHandLandmarks[0];
+
+                const handX = landmarks[8].x;
+                const handY = landmarks[8].y;
+
+                xDisplay.textContent = `X: ${handX.toFixed(3)}`;
+                yDisplay.textContent = `Y: ${handY.toFixed(3)}`;
+
+                const gesture = classifyGesture(landmarks);
+                gestureDisplay.textContent = `Hand: ${gesture}`;
+
+                const distances = calculateLandmarkDistances(landmarks);
+                displayLandmarkData(distances);
+
+                // Calculate bounding box around the hand
+                let minX = 1, maxX = 0, minY = 1, maxY = 0;
+                landmarks.forEach(landmark => {
+                    if (landmark.x < minX) minX = landmark.x;
+                    if (landmark.x > maxX) maxX = landmark.x;
+                    if (landmark.y < minY) minY = landmark.y;
+                    if (landmark.y > maxY) maxY = landmark.y;
+                });
+
+                // Convert normalized coordinates to canvas pixel coordinates
+                const boxX = minX * canvasElement.width;
+                const boxY = minY * canvasElement.height;
+                const boxWidth = (maxX - minX) * canvasElement.width;
+                const boxHeight = (maxY - minY) * canvasElement.height;
+
+                // Draw the bounding box
+                canvasCtx.strokeStyle = '#00ffff';
+                canvasCtx.lineWidth = 2;
+                canvasCtx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+
+                // Draw a point at the palm base (landmark 0)
+                const palmX = landmarks[0].x * canvasElement.width;
+                const palmY = landmarks[0].y * canvasElement.height;
+                canvasCtx.fillStyle = '#00FFFF';
+                canvasCtx.beginPath();
+                canvasCtx.arc(palmX, palmY, 5, 0, 2 * Math.PI);
+                canvasCtx.fill();
+
+            } else {
+                // No hand detected, reset UI elements
+                xDisplay.textContent = 'X: 0';
+                yDisplay.textContent = 'Y: 0';
+                gestureDisplay.textContent = 'Hand: None';
+                landmarkDisplay.textContent = 'Landmark Data: No hand detected';
+            }
+        };
+
+        // Register the callback function for MediaPipe results
+        hands.onResults(onHandsResults);
+
+
+        // --- Camera Setup and Frame Processing ---
+
+        const onCameraFrame = async () => {
+            if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
+                await hands.send({ image: videoElement });
+            }
+        };
+
+        const camera = new Camera(videoElement, {
+            deviceId: CAMERA_ID,
+            onFrame: onCameraFrame,
+            width: VIDEO_WIDTH,
+            height: VIDEO_HEIGHT
+        });
+
+        // Start capturing frames from the camera
+        camera.start()
+            .then(() => {
+                console.log(`Camera started successfully with deviceId: ${CAMERA_ID}`);
+            })
+            .catch((error) => {
+                console.error("Failed to start camera:", error);
+                // Display an error message to the user if the camera fails
+                gestureDisplay.textContent = "Error: Camera access failed.";
+                gestureDisplay.style.color = "red";
+                // Potentially provide guidance on checking permissions or camera ID
+                alert(`Failed to access camera with ID: ${CAMERA_ID}. Please ensure the correct ID is set and permissions are granted. Check console for details.`);
+            });
+
+
+        // --- Utility Functions ---
+
+        function distance(point1, point2) {
+            return Math.sqrt(
+                Math.pow(point1.x - point2.x, 2) + Math.pow(point1.y - point2.y, 2)
+            );
+        }
+
+        /**
+         * Classifies the current hand pose into predefined gestures ("Pinch", "Closed", "Open")
+         * based on the relative distances between specific landmarks.
+         * This is a simplified gesture recognition logic.
+         * @param {Array<object>} landmarks - Array of hand landmark objects, each with x, y, (and z) coordinates.
+         * @returns {string} - The name of the classified gesture ("Pinch", "Closed", or "Open").
+         */
+        function classifyGesture(landmarks) {
+            // Define key landmarks for gesture recognition
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const middleTip = landmarks[12];
+            const ringTip = landmarks[16];
+            const pinkyTip = landmarks[20];
+            const palmBase = landmarks[0]; // Wrist or base of the palm
+
+            // Calculate relevant distances
+            const thumbIndexDist = distance(thumbTip, indexTip);
+            const indexPalmDist = distance(indexTip, palmBase);
+            const middlePalmDist = distance(middleTip, palmBase);
+            const ringPalmDist = distance(ringTip, palmBase);
+            const pinkyPalmDist = distance(pinkyTip, palmBase);
+
+            // --- Gesture Logic ---
+            // Pinch: Thumb tip is close to Index tip, other fingers are relatively extended.
+            // Thresholds (e.g., 0.04, 0.2) are empirical and may need tuning.
+            if (thumbIndexDist < 0.04 && middlePalmDist > 0.2 && ringPalmDist > 0.2 && pinkyPalmDist > 0.2) {
+                return "Pinch";
+            }
+
+            // Closed: Ring and Middle fingers are close to the palm base.
+            // Thresholds (e.g., 0.15, 0.2) are empirical and may need tuning.
+            if (ringPalmDist < 0.15 && middlePalmDist < 0.2) {
+                return "Closed";
+            }
+
+            // Default to Open if neither Pinch nor Closed conditions are met.
+            return "Open";
+        }
+
+        /**
+         * Calculates the distances between several key pairs of hand landmarks.
+         * These distances can be used for gesture recognition or other analysis.
+         * @param {Array<object>} landmarks - Array of hand landmark objects.
+         * @returns {object} - An object containing various calculated distances, formatted to 4 decimal places.
+         */
+        function calculateLandmarkDistances(landmarks) {
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const middleTip = landmarks[12];
+            const ringTip = landmarks[16];
+            const pinkyTip = landmarks[20];
+            const palmBase = landmarks[0];
+
+            return {
+                thumbIndexDist: distance(thumbTip, indexTip).toFixed(4),
+                indexPalmDist: distance(indexTip, palmBase).toFixed(4),
+                middlePalmDist: distance(middleTip, palmBase).toFixed(4),
+                ringPalmDist: distance(ringTip, palmBase).toFixed(4),
+                pinkyPalmDist: distance(pinkyTip, palmBase).toFixed(4)
+            };
+        }
+
+        /**
+         * Updates the content of the landmark display element (`#landmark-display`)
+         * with the calculated distances between key hand landmarks.
+         * @param {object} distances - An object containing landmark distances (e.g., from `calculateLandmarkDistances`).
+         */
+        function displayLandmarkData(distances) {
+            // Use innerHTML to format the display with line breaks
+            landmarkDisplay.innerHTML = `
+                Landmark Data:<br>
+                Thumb-Index: ${distances.thumbIndexDist}<br>
+                Index-Palm: ${distances.indexPalmDist}<br>
+                Middle-Palm: ${distances.middlePalmDist}<br>
+                Ring-Palm: ${distances.ringPalmDist}<br>
+                Pinky-Palm: ${distances.pinkyPalmDist}
+            `;
+        }
+
+    </script>
+</body>
+</html>
